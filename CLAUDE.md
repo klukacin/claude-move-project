@@ -1,0 +1,37 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+`claude-move-project` is a bash utility that moves Claude Code projects while preserving all session history and settings. It handles three interconnected data stores:
+
+1. **Project folder** - The actual project directory with code and `.claude/` settings
+2. **History folder** - `~/.claude/projects/[encoded-path]/` containing session JSONL files
+3. **History index** - `~/.claude/history.jsonl` with project path references
+
+The encoded path format converts `/path/to/dir` to `-path-to-dir`.
+
+## Testing
+
+Test locally by running with `--dry-run` flag:
+```bash
+./claude-move-project ./test-project ~/new-location --dry-run
+```
+
+## Key Implementation Details
+
+- Uses `set -euo pipefail` for strict error handling
+- Implements atomic rollback via EXIT trap if any step fails
+- Handles macOS vs Linux `sed -i` differences
+- Path resolution works for both existing and non-existing destination paths
+
+## Migration Sequence
+
+The script performs operations in this order (critical for rollback):
+1. Backup `history.jsonl`
+2. Move project folder
+3. Rename history folder in `~/.claude/projects/`
+4. Update path references in `history.jsonl`
+
+Rollback reverses these steps if any operation fails.

@@ -1,0 +1,14 @@
+# Claude Code local settings
+.claude/
+
+# Debug logs
+*.log
+firebase-debug.log
+
+# macOS
+.DS_Store
+
+# Editor files
+*.swp
+*.swo
+*~

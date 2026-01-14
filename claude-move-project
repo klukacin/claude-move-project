@@ -1,0 +1,377 @@
+#!/bin/bash
+#
+# claude-move-project - Move a Claude Code project with session history
+#
+# Copyright (c) 2025 WEB Solutions Ltd. (ws.agency) & Kristijan Lukačin
+# https://ws.agency
+#
+# Licensed under the MIT License. See LICENSE file for details.
+#
+# Usage: claude-move-project [OPTIONS] <source> <destination>
+#
+
+set -euo pipefail
+
+VERSION="1.0.0"
+CLAUDE_DIR="$HOME/.claude"
+PROJECTS_DIR="$CLAUDE_DIR/projects"
+HISTORY_FILE="$CLAUDE_DIR/history.jsonl"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# State tracking for rollback
+BACKUP_FILE=""
+PROJECT_FOLDER_MOVED=false
+HISTORY_FOLDER_MOVED=false
+SOURCE_ABS=""
+DEST_ABS=""
+OLD_ENCODED=""
+NEW_ENCODED=""
+
+# Options
+DRY_RUN=false
+FORCE=false
+BACKUP=true
+VERBOSE=false
+
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}[OK]${NC} $1"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1" >&2
+}
+
+show_help() {
+    cat << EOF
+claude-move-project v$VERSION
+Move a Claude Code project with all session history and settings.
+
+Usage: claude-move-project [OPTIONS] <source> <destination>
+
+Arguments:
+  source         Path to the project to move (can be relative or absolute)
+  destination    Target location for the project
+
+Options:
+  -n, --dry-run       Preview changes without executing
+  -f, --force         Skip confirmation prompt
+  --no-backup         Skip backup of history.jsonl
+  -v, --verbose       Show detailed output
+  -h, --help          Show this help message
+  --version           Show version
+
+Examples:
+  claude-move-project ./my-project ~/new-location/my-project
+  claude-move-project /Users/me/old-path /Users/me/new-path --dry-run
+  claude-move-project . ../renamed-project -f
+
+What gets migrated:
+  - Project folder (moved to destination)
+  - ~/.claude/projects/[encoded-path]/ (renamed to new path)
+  - ~/.claude/history.jsonl (path references updated)
+  - .claude/ settings and CLAUDE.md files (move with project)
+EOF
+}
+
+# Convert path to Claude's encoded format: /path/to/dir -> -path-to-dir
+encode_path() {
+    local path="$1"
+    echo "${path//\//-}"
+}
+
+# Get absolute path (works on macOS and Linux)
+get_absolute_path() {
+    local path="$1"
+    if [[ -d "$path" ]]; then
+        (cd "$path" && pwd)
+    elif [[ -f "$path" ]]; then
+        local dir
+        dir=$(dirname "$path")
+        echo "$(cd "$dir" && pwd)/$(basename "$path")"
+    else
+        # Path doesn't exist yet, resolve parent
+        local parent
+        parent=$(dirname "$path")
+        if [[ -d "$parent" ]]; then
+            echo "$(cd "$parent" && pwd)/$(basename "$path")"
+        else
+            echo "$path"
+        fi
+    fi
+}
+
+# Rollback on failure
+cleanup() {
+    local exit_code=$?
+    if [[ $exit_code -ne 0 && "$DRY_RUN" == false ]]; then
+        echo ""
+        log_error "Migration failed! Initiating rollback..."
+
+        # Restore history.jsonl from backup
+        if [[ -n "$BACKUP_FILE" && -f "$BACKUP_FILE" ]]; then
+            cp "$BACKUP_FILE" "$HISTORY_FILE"
+            log_info "Restored history.jsonl from backup"
+        fi
+
+        # Move history folder back
+        if [[ "$HISTORY_FOLDER_MOVED" == true && -d "$PROJECTS_DIR/$NEW_ENCODED" ]]; then
+            mv "$PROJECTS_DIR/$NEW_ENCODED" "$PROJECTS_DIR/$OLD_ENCODED"
+            log_info "Restored history folder"
+        fi
+
+        # Move project folder back
+        if [[ "$PROJECT_FOLDER_MOVED" == true && -d "$DEST_ABS" ]]; then
+            mv "$DEST_ABS" "$SOURCE_ABS"
+            log_info "Restored project folder"
+        fi
+
+        log_info "Rollback complete"
+    fi
+}
+
+trap cleanup EXIT
+
+# Parse arguments
+parse_args() {
+    local source_set=false
+    local dest_set=false
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -n|--dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            -f|--force)
+                FORCE=true
+                shift
+                ;;
+            --no-backup)
+                BACKUP=false
+                shift
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            --version)
+                echo "claude-move-project v$VERSION"
+                exit 0
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                echo "Use --help for usage information"
+                exit 1
+                ;;
+            *)
+                if [[ "$source_set" == false ]]; then
+                    SOURCE="$1"
+                    source_set=true
+                elif [[ "$dest_set" == false ]]; then
+                    DESTINATION="$1"
+                    dest_set=true
+                else
+                    log_error "Too many arguments"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ "$source_set" == false ]]; then
+        log_error "Source path required"
+        echo "Use --help for usage information"
+        exit 1
+    fi
+
+    if [[ "$dest_set" == false ]]; then
+        log_error "Destination path required"
+        echo "Use --help for usage information"
+        exit 1
+    fi
+}
+
+# Validate inputs and calculate paths
+validate() {
+    # Resolve source path
+    if [[ ! -d "$SOURCE" ]]; then
+        log_error "Source directory does not exist: $SOURCE"
+        exit 1
+    fi
+    SOURCE_ABS=$(get_absolute_path "$SOURCE")
+
+    # Resolve destination path
+    local dest_parent
+    dest_parent=$(dirname "$DESTINATION")
+    if [[ ! -d "$dest_parent" ]]; then
+        log_error "Destination parent directory does not exist: $dest_parent"
+        echo "Create it first with: mkdir -p $dest_parent"
+        exit 1
+    fi
+    DEST_ABS=$(get_absolute_path "$DESTINATION")
+
+    # Check destination doesn't exist
+    if [[ -e "$DEST_ABS" ]]; then
+        log_error "Destination already exists: $DEST_ABS"
+        exit 1
+    fi
+
+    # Calculate encoded paths
+    OLD_ENCODED=$(encode_path "$SOURCE_ABS")
+    NEW_ENCODED=$(encode_path "$DEST_ABS")
+
+    # Check for history folder (warn if not found)
+    if [[ ! -d "$PROJECTS_DIR/$OLD_ENCODED" ]]; then
+        log_warn "No Claude history found for this project"
+        log_warn "Looking for: $PROJECTS_DIR/$OLD_ENCODED"
+        echo "The project will be moved but there's no session history to migrate."
+    fi
+}
+
+# Show preview of what will happen
+show_preview() {
+    echo ""
+    echo "Claude Code Project Migration"
+    echo "=============================="
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "${YELLOW}DRY RUN MODE - No changes will be made${NC}"
+    fi
+    echo ""
+
+    echo "Project Move:"
+    echo "  From: $SOURCE_ABS"
+    echo "  To:   $DEST_ABS"
+    echo ""
+
+    echo "History Migration:"
+    echo "  From: $PROJECTS_DIR/$OLD_ENCODED/"
+    echo "  To:   $PROJECTS_DIR/$NEW_ENCODED/"
+
+    # Count session files
+    if [[ -d "$PROJECTS_DIR/$OLD_ENCODED" ]]; then
+        local session_count
+        session_count=$(find "$PROJECTS_DIR/$OLD_ENCODED" -name "*.jsonl" 2>/dev/null | wc -l | tr -d ' ')
+        echo "  Sessions: $session_count JSONL file(s)"
+    else
+        echo "  Sessions: (no history folder found)"
+    fi
+    echo ""
+
+    # Count history.jsonl entries
+    if [[ -f "$HISTORY_FILE" ]]; then
+        local entry_count
+        entry_count=$(grep -c "\"project\":\"$SOURCE_ABS\"" "$HISTORY_FILE" 2>/dev/null || echo "0")
+        echo "History Index Updates:"
+        echo "  File: $HISTORY_FILE"
+        echo "  Entries to update: $entry_count reference(s)"
+    else
+        echo "History Index: (file not found)"
+    fi
+    echo ""
+
+    if [[ "$BACKUP" == true && -f "$HISTORY_FILE" ]]; then
+        echo "Backup will be created at:"
+        echo "  $HISTORY_FILE.backup.$(date +%Y%m%d-%H%M%S)"
+        echo ""
+    fi
+}
+
+# Confirm with user
+confirm() {
+    if [[ "$FORCE" == true || "$DRY_RUN" == true ]]; then
+        return 0
+    fi
+
+    read -p "Proceed with migration? [y/N] " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log_info "Migration cancelled"
+        exit 0
+    fi
+}
+
+# Execute the migration
+execute() {
+    if [[ "$DRY_RUN" == true ]]; then
+        echo "Run without --dry-run to execute migration."
+        return 0
+    fi
+
+    echo "Starting migration..."
+    echo ""
+
+    # Step 1: Backup history.jsonl
+    if [[ "$BACKUP" == true && -f "$HISTORY_FILE" ]]; then
+        BACKUP_FILE="$HISTORY_FILE.backup.$(date +%Y%m%d-%H%M%S)"
+        cp "$HISTORY_FILE" "$BACKUP_FILE"
+        log_success "Created backup: $BACKUP_FILE"
+    fi
+
+    # Step 2: Move project folder
+    log_info "Moving project folder..."
+    mv "$SOURCE_ABS" "$DEST_ABS"
+    PROJECT_FOLDER_MOVED=true
+    log_success "Moved project to: $DEST_ABS"
+
+    # Step 3: Rename history folder
+    if [[ -d "$PROJECTS_DIR/$OLD_ENCODED" ]]; then
+        log_info "Renaming history folder..."
+        mv "$PROJECTS_DIR/$OLD_ENCODED" "$PROJECTS_DIR/$NEW_ENCODED"
+        HISTORY_FOLDER_MOVED=true
+        log_success "Renamed history folder"
+    fi
+
+    # Step 4: Update history.jsonl
+    if [[ -f "$HISTORY_FILE" ]]; then
+        log_info "Updating history index..."
+        # Escape special characters for sed
+        local old_escaped
+        local new_escaped
+        old_escaped=$(printf '%s\n' "$SOURCE_ABS" | sed 's/[&/\]/\\&/g')
+        new_escaped=$(printf '%s\n' "$DEST_ABS" | sed 's/[&/\]/\\&/g')
+
+        # macOS sed requires '' after -i, Linux doesn't
+        if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' "s|\"project\":\"$old_escaped\"|\"project\":\"$new_escaped\"|g" "$HISTORY_FILE"
+        else
+            sed -i "s|\"project\":\"$old_escaped\"|\"project\":\"$new_escaped\"|g" "$HISTORY_FILE"
+        fi
+        log_success "Updated history index"
+    fi
+
+    echo ""
+    log_success "Migration complete!"
+    echo ""
+    echo "Resume your session with:"
+    echo "  cd $DEST_ABS && claude --continue"
+}
+
+# Main
+main() {
+    parse_args "$@"
+    validate
+    show_preview
+    confirm
+    execute
+}
+
+main "$@"
