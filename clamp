@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-VERSION="1.4.0"
+VERSION="1.4.1"
 CLAUDE_DIR="$HOME/.claude"
 PROJECTS_DIR="$CLAUDE_DIR/projects"
 HISTORY_FILE="$CLAUDE_DIR/history.jsonl"
@@ -531,6 +531,22 @@ validate_source_project() {
     fi
     SOURCE_ABS=$(get_absolute_path "$SOURCE")
     log_verbose "Resolved source path: $SOURCE_ABS"
+
+    # On case-insensitive filesystems (macOS APFS), `cd "$path" && pwd` preserves
+    # the casing of the input, not the canonical filesystem casing. If the user's
+    # shell resolves a different case than what Claude Code stored in history.jsonl,
+    # the sed replacement will silently match nothing. Fix by looking up the
+    # canonical path string from history.jsonl via case-insensitive match.
+    if [[ -f "$HISTORY_FILE" ]] && ! grep -qF -- "\"project\":\"$SOURCE_ABS\"" "$HISTORY_FILE"; then
+        local ci_match
+        ci_match=$(grep -iF -- "\"project\":\"$SOURCE_ABS\"" "$HISTORY_FILE" | head -1 | sed -n 's/.*"project":"\([^"]*\)".*/\1/p') || true
+        if [[ -n "$ci_match" ]]; then
+            log_warn "Path case mismatch detected (case-insensitive filesystem)"
+            log_verbose "  Shell resolved: $SOURCE_ABS"
+            log_verbose "  History record: $ci_match"
+            SOURCE_ABS="$ci_match"
+        fi
+    fi
 
     # Validate source path is absolute
     if ! is_absolute_path "$SOURCE_ABS"; then

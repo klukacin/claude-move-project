@@ -762,6 +762,43 @@ test_prune_dry_run() {
 }
 
 # ============================================================================
+# CASE-SENSITIVITY TESTS
+# ============================================================================
+
+test_case_insensitive_path() {
+    # Skip on case-sensitive filesystems
+    local testdir="$TEST_DIR/CaSeTest"
+    mkdir -p "$testdir"
+    if ! ls "$TEST_DIR/casetest" &>/dev/null 2>&1; then
+        log_skip "Filesystem is case-sensitive, skipping"
+        return 0
+    fi
+    rm -rf "$testdir"
+
+    # Create project with lowercase path
+    mkdir -p "$TEST_DIR/projects/myapp"
+    create_mock_project "$TEST_DIR/projects/myapp"
+    local source_abs
+    source_abs=$(cd "$TEST_DIR/projects/myapp" && pwd)
+
+    # Overwrite history.jsonl with canonical (lowercase) path
+    # (simulating what Claude Code stores)
+    echo "{\"project\":\"$source_abs\",\"session\":\"s1\"}" > "$MOCK_CLAUDE_DIR/history.jsonl"
+
+    # Run clamp using UPPERCASE path (simulating user's shell casing)
+    # On case-insensitive FS, this resolves to the same directory
+    local upper_source="$TEST_DIR/PROJECTS/myapp"
+
+    "$SCRIPT" "$upper_source" "$TEST_DIR/newloc/myapp" -f -p
+
+    # Verify history was updated (the critical assertion)
+    assert_not_contains "$MOCK_CLAUDE_DIR/history.jsonl" "$source_abs" \
+        "Old path should not be in history" || return 1
+    assert_contains "$MOCK_CLAUDE_DIR/history.jsonl" "$TEST_DIR/newloc/myapp" \
+        "New path should be in history" || return 1
+}
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -815,6 +852,8 @@ main() {
         test_prune_orphaned
         test_prune_nothing
         test_prune_dry_run
+        # case-sensitivity tests
+        test_case_insensitive_path
     )
 
     # Run specific test or all tests
