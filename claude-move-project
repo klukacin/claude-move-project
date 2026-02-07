@@ -12,12 +12,12 @@
 
 set -euo pipefail
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 CLAUDE_DIR="$HOME/.claude"
 PROJECTS_DIR="$CLAUDE_DIR/projects"
 HISTORY_FILE="$CLAUDE_DIR/history.jsonl"
 
-# Operation mode: move (default), remove, pack, unpack
+# Operation mode: move (default), remove, pack, unpack, list, fix, verify, info
 OPERATION="move"
 
 # Colors for output
@@ -46,6 +46,11 @@ DRY_RUN=false
 FORCE=false
 BACKUP=true
 VERBOSE=false
+PARENTS=false
+JSON_OUTPUT=false
+HERE_MODE=false
+FIX_FROM=""
+FIX_TO=""
 
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
@@ -66,19 +71,30 @@ log_error() {
 show_help() {
     cat << EOF
 claude-move-project v$VERSION
-Move, remove, pack, or unpack Claude Code projects with session history.
+Move, remove, pack, unpack, list, fix, verify, or inspect Claude Code projects.
 
 Usage:
   claude-move-project [OPTIONS] <source> <destination>
+  claude-move-project --here [OPTIONS] <source>
   claude-move-project --remove [OPTIONS] <project-path>
   claude-move-project --pack [OPTIONS] <project-path> [archive-path]
   claude-move-project --unpack [OPTIONS] <archive-path> <destination>
+  claude-move-project --list [--json]
+  claude-move-project --fix [project-path]
+  claude-move-project --fix --from <old-path> --to <new-path>
+  claude-move-project --verify
+  claude-move-project --info <project-path>
 
 Operations:
   (default)           Move project to new location
+  --here              Move project into current directory
   --remove            Delete project and all Claude session data
   --pack              Archive project into portable .claudepack file
   --unpack            Restore archive to destination with path rewriting
+  --list              List all Claude projects with status
+  --fix               Repair broken project references after manual mv
+  --verify            Check integrity of all project references
+  --info              Show detailed info about a project
 
 Arguments:
   source/project-path  Path to the project (can be relative or absolute)
@@ -88,7 +104,11 @@ Arguments:
 Options:
   -n, --dry-run       Preview changes without executing
   -f, --force         Skip confirmation prompt
+  -p, --parents       Create parent directories as needed
   --no-backup         Skip backup of history.jsonl
+  --json              Output in JSON format (for --list)
+  --from <path>       Original path (for --fix)
+  --to <path>         New path (for --fix)
   -v, --verbose       Show detailed output
   -h, --help          Show this help message
   --version           Show version
@@ -96,19 +116,26 @@ Options:
 Examples:
   # Move project
   claude-move-project ./my-project ~/new-location/my-project
-  claude-move-project /Users/me/old-path /Users/me/new-path --dry-run
+  claude-move-project --here ~/old-location/my-project
+  claude-move-project ./project ~/deep/nested/path -p
 
   # Remove project and all session data
   claude-move-project --remove ./my-project
-  claude-move-project --remove ./my-project --dry-run
 
-  # Pack project for transfer
+  # Pack/unpack project
   claude-move-project --pack ./my-project
-  claude-move-project --pack ./my-project ~/archives/my-project.claudepack
+  claude-move-project --unpack backup.claudepack ~/projects/my-project
 
-  # Unpack archive to new location
-  claude-move-project --unpack my-project.claudepack ~/projects/my-project
-  claude-move-project --unpack backup.claudepack ./restored --dry-run
+  # List, inspect, and maintain
+  claude-move-project --list
+  claude-move-project --list --json
+  claude-move-project --info ./my-project
+  claude-move-project --verify
+
+  # Fix broken references after manual mv
+  claude-move-project --fix                              # auto-detect
+  claude-move-project --fix /new/location/my-project     # find old path
+  claude-move-project --fix --from /old/path --to /new/path
 
 What gets migrated:
   - Project folder (moved/copied/deleted based on operation)
@@ -252,8 +279,34 @@ parse_args() {
                 FORCE=true
                 shift
                 ;;
+            -p|--parents)
+                PARENTS=true
+                shift
+                ;;
             --no-backup)
                 BACKUP=false
+                shift
+                ;;
+            --json)
+                JSON_OUTPUT=true
+                shift
+                ;;
+            --from)
+                shift
+                if [[ $# -eq 0 ]]; then
+                    log_error "--from requires a path argument"
+                    exit 1
+                fi
+                FIX_FROM="$1"
+                shift
+                ;;
+            --to)
+                shift
+                if [[ $# -eq 0 ]]; then
+                    log_error "--to requires a path argument"
+                    exit 1
+                fi
+                FIX_TO="$1"
                 shift
                 ;;
             -v|--verbose)
@@ -292,6 +345,42 @@ parse_args() {
                 OPERATION="unpack"
                 shift
                 ;;
+            --list)
+                if [[ "$OPERATION" != "move" ]]; then
+                    log_error "Cannot combine --list with --$OPERATION"
+                    exit 1
+                fi
+                OPERATION="list"
+                shift
+                ;;
+            --fix|--repair)
+                if [[ "$OPERATION" != "move" ]]; then
+                    log_error "Cannot combine --fix with --$OPERATION"
+                    exit 1
+                fi
+                OPERATION="fix"
+                shift
+                ;;
+            --verify|--health)
+                if [[ "$OPERATION" != "move" ]]; then
+                    log_error "Cannot combine --verify with --$OPERATION"
+                    exit 1
+                fi
+                OPERATION="verify"
+                shift
+                ;;
+            --info)
+                if [[ "$OPERATION" != "move" ]]; then
+                    log_error "Cannot combine --info with --$OPERATION"
+                    exit 1
+                fi
+                OPERATION="info"
+                shift
+                ;;
+            --here)
+                HERE_MODE=true
+                shift
+                ;;
             -*)
                 log_error "Unknown option: $1"
                 echo "Use --help for usage information"
@@ -312,6 +401,24 @@ parse_args() {
                 ;;
         esac
     done
+
+    # Handle --here mode: convert to a move operation
+    if [[ "$HERE_MODE" == true ]]; then
+        if [[ "$OPERATION" != "move" ]]; then
+            log_error "Cannot combine --here with --$OPERATION"
+            exit 1
+        fi
+        if [[ "$arg1_set" == false ]]; then
+            log_error "Source path required with --here"
+            echo "Usage: claude-move-project --here <source>"
+            exit 1
+        fi
+        SOURCE="$ARG1"
+        local source_basename
+        source_basename=$(basename "$ARG1")
+        DESTINATION="./$source_basename"
+        return
+    fi
 
     # Validate argument count based on operation
     case "$OPERATION" in
@@ -367,6 +474,26 @@ parse_args() {
             ARCHIVE_PATH="$ARG1"
             DESTINATION="$ARG2"
             ;;
+        list)
+            # No arguments required
+            ;;
+        fix)
+            # Optional: single path arg or --from/--to
+            if [[ "$arg1_set" == true ]]; then
+                FIX_TO="$ARG1"
+            fi
+            ;;
+        verify)
+            # No arguments required
+            ;;
+        info)
+            if [[ "$arg1_set" == false ]]; then
+                log_error "Project path required"
+                echo "Usage: claude-move-project --info <project-path>"
+                exit 1
+            fi
+            SOURCE="$ARG1"
+            ;;
     esac
 }
 
@@ -414,9 +541,19 @@ validate_move() {
     local dest_parent
     dest_parent=$(dirname "$DESTINATION")
     if [[ ! -d "$dest_parent" ]]; then
-        log_error "Destination parent directory does not exist: $dest_parent"
-        echo "Create it first with: mkdir -p \"$dest_parent\""
-        exit 1
+        if [[ "$PARENTS" == true ]]; then
+            if [[ "$DRY_RUN" == false ]]; then
+                mkdir -p "$dest_parent"
+                log_verbose "Created parent directories: $dest_parent"
+            else
+                log_info "Would create parent directories: $dest_parent"
+            fi
+        else
+            log_error "Destination parent directory does not exist: $dest_parent"
+            echo "Create it first with: mkdir -p \"$dest_parent\""
+            echo "Or use -p/--parents to create automatically"
+            exit 1
+        fi
     fi
     DEST_ABS=$(get_absolute_path "$DESTINATION")
     log_verbose "Resolved destination path: $DEST_ABS"
@@ -524,9 +661,19 @@ validate_unpack() {
     local dest_parent
     dest_parent=$(dirname "$DESTINATION")
     if [[ ! -d "$dest_parent" ]]; then
-        log_error "Destination parent directory does not exist: $dest_parent"
-        echo "Create it first with: mkdir -p \"$dest_parent\""
-        exit 1
+        if [[ "$PARENTS" == true ]]; then
+            if [[ "$DRY_RUN" == false ]]; then
+                mkdir -p "$dest_parent"
+                log_verbose "Created parent directories: $dest_parent"
+            else
+                log_info "Would create parent directories: $dest_parent"
+            fi
+        else
+            log_error "Destination parent directory does not exist: $dest_parent"
+            echo "Create it first with: mkdir -p \"$dest_parent\""
+            echo "Or use -p/--parents to create automatically"
+            exit 1
+        fi
     fi
     DEST_ABS=$(get_absolute_path "$DESTINATION")
     log_verbose "Resolved destination path: $DEST_ABS"
@@ -557,6 +704,38 @@ validate_unpack() {
     fi
 }
 
+# Validate inputs for info operation
+validate_info() {
+    validate_source_project
+}
+
+# Validate inputs for fix operation
+validate_fix() {
+    # --fix with --from/--to: validate both exist/don't exist
+    if [[ -n "$FIX_FROM" && -n "$FIX_TO" ]]; then
+        # --from path should NOT exist (project was moved away)
+        if [[ -d "$FIX_FROM" ]]; then
+            log_warn "Source path still exists: $FIX_FROM"
+            log_warn "If the project was copied (not moved), this is expected"
+        fi
+        # --to path SHOULD exist (project is now here)
+        if [[ ! -d "$FIX_TO" ]]; then
+            log_error "Destination path does not exist: $FIX_TO"
+            exit 1
+        fi
+        FIX_FROM=$(get_absolute_path "$FIX_FROM")
+        FIX_TO=$(get_absolute_path "$FIX_TO")
+    elif [[ -n "$FIX_TO" ]]; then
+        # Single path: project's new location, auto-detect old
+        if [[ ! -d "$FIX_TO" ]]; then
+            log_error "Path does not exist: $FIX_TO"
+            exit 1
+        fi
+        FIX_TO=$(get_absolute_path "$FIX_TO")
+    fi
+    # No args: full auto-detect mode — validated during execute
+}
+
 # Dispatch to appropriate validation function
 validate() {
     case "$OPERATION" in
@@ -564,6 +743,10 @@ validate() {
         remove) validate_remove ;;
         pack)   validate_pack ;;
         unpack) validate_unpack ;;
+        list)   ;; # No validation needed
+        fix)    validate_fix ;;
+        verify) ;; # No validation needed
+        info)   validate_info ;;
     esac
 }
 
@@ -777,6 +960,7 @@ show_preview() {
         remove) show_preview_remove ;;
         pack)   show_preview_pack ;;
         unpack) show_preview_unpack ;;
+        list|verify|info|fix) ;; # These operations handle their own output
     esac
 }
 
@@ -803,6 +987,14 @@ confirm() {
         unpack)
             prompt="Unpack archive to destination? [y/N] "
             action_name="Unpack"
+            ;;
+        list|verify|info)
+            # Read-only operations don't need confirmation
+            return 0
+            ;;
+        fix)
+            # Fix confirmation is handled inside execute_fix
+            return 0
             ;;
     esac
 
@@ -1097,8 +1289,723 @@ execute_unpack() {
     echo "  cd $DEST_ABS && claude --continue"
 }
 
+# Get last modified time of a file in human-readable format
+get_last_modified() {
+    local path="$1"
+    if [[ "$(uname)" == "Darwin" ]]; then
+        stat -f "%Sm" -t "%Y-%m-%d %H:%M" "$path" 2>/dev/null || echo "unknown"
+    else
+        stat -c "%y" "$path" 2>/dev/null | cut -d'.' -f1 || echo "unknown"
+    fi
+}
+
+# Get last modified time as epoch seconds (for sorting)
+get_last_modified_epoch() {
+    local path="$1"
+    if [[ "$(uname)" == "Darwin" ]]; then
+        stat -f "%m" "$path" 2>/dev/null || echo "0"
+    else
+        stat -c "%Y" "$path" 2>/dev/null || echo "0"
+    fi
+}
+
+# Count session files for a given encoded path
+count_sessions() {
+    local encoded="$1"
+    if [[ -d "$PROJECTS_DIR/$encoded" ]]; then
+        find "$PROJECTS_DIR/$encoded" -name "*.jsonl" 2>/dev/null | wc -l | tr -d ' '
+    else
+        echo "0"
+    fi
+}
+
+# Check if a value exists in a newline-separated string
+# Usage: if _list_has "$seen_list" "$value"; then ...
+_list_has() {
+    local list="$1"
+    local val="$2"
+    echo "$list" | grep -qFx -- "$val" 2>/dev/null
+}
+
+# Extract unique project paths from history.jsonl
+_extract_history_projects() {
+    if [[ -f "$HISTORY_FILE" ]]; then
+        grep -o '"project":"[^"]*"' "$HISTORY_FILE" 2>/dev/null | \
+            sed 's/"project":"//;s/"$//' | sort -u || true
+    fi
+}
+
+# Execute list operation
+execute_list() {
+    # Collect all known project paths from history.jsonl and session folders
+    local projects=""
+    local seen=""
+
+    # Source 1: Parse history.jsonl for project paths
+    local hist_projects
+    hist_projects=$(_extract_history_projects)
+    if [[ -n "$hist_projects" ]]; then
+        while IFS= read -r proj_path; do
+            if [[ -n "$proj_path" ]] && ! _list_has "$seen" "$proj_path"; then
+                projects="${projects}${projects:+$'\n'}${proj_path}"
+                seen="${seen}${seen:+$'\n'}${proj_path}"
+            fi
+        done <<< "$hist_projects"
+    fi
+
+    # Source 2: Scan session folders for any not matching a history entry
+    # Note: We can't reliably decode encoded paths (hyphens in names collide),
+    # so we check if any known project encodes to each session folder
+    local known_encoded=""
+    if [[ -n "$seen" ]]; then
+        while IFS= read -r kp; do
+            [[ -z "$kp" ]] && continue
+            known_encoded="${known_encoded}${known_encoded:+$'\n'}${kp//\//-}"
+        done <<< "$seen"
+    fi
+
+    if [[ -d "$PROJECTS_DIR" ]]; then
+        for session_dir in "$PROJECTS_DIR"/*/; do
+            [[ -d "$session_dir" ]] || continue
+            local encoded
+            encoded=$(basename "$session_dir")
+            if ! _list_has "$known_encoded" "$encoded"; then
+                local label="(orphaned session: $encoded)"
+                projects="${projects}${projects:+$'\n'}${label}"
+            fi
+        done
+    fi
+
+    if [[ -z "$projects" ]]; then
+        if [[ "$JSON_OUTPUT" == true ]]; then
+            echo "[]"
+        else
+            echo "No Claude projects found."
+        fi
+        return 0
+    fi
+
+    local project_count=0
+    while IFS= read -r _p; do
+        [[ -n "$_p" ]] && ((project_count++))
+    done <<< "$projects"
+
+    if [[ "$JSON_OUTPUT" == true ]]; then
+        # JSON output
+        echo "["
+        local first=true
+        while IFS= read -r proj_path; do
+            [[ -z "$proj_path" ]] && continue
+            local encoded="${proj_path//\//-}"
+            local sessions
+            sessions=$(count_sessions "$encoded")
+            local size="0"
+            local session_size="0"
+            local exists=false
+            local last_activity="unknown"
+
+            if [[ -d "$proj_path" ]]; then
+                exists=true
+                size=$(du -sk "$proj_path" 2>/dev/null | cut -f1)
+            fi
+            if [[ -d "$PROJECTS_DIR/$encoded" ]]; then
+                session_size=$(du -sk "$PROJECTS_DIR/$encoded" 2>/dev/null | cut -f1)
+                # Get last activity from newest session file
+                local newest
+                newest=$(find "$PROJECTS_DIR/$encoded" -name "*.jsonl" -type f 2>/dev/null | head -1)
+                if [[ -n "$newest" ]]; then
+                    last_activity=$(get_last_modified "$newest")
+                fi
+            fi
+
+            if [[ "$first" == true ]]; then
+                first=false
+            else
+                echo ","
+            fi
+            printf '  {"path":"%s","exists":%s,"sessions":%s,"project_size_kb":%s,"session_size_kb":%s,"last_activity":"%s"}' \
+                "$proj_path" "$exists" "$sessions" "$size" "$session_size" "$last_activity"
+        done <<< "$projects"
+        echo ""
+        echo "]"
+    else
+        # Human-readable output
+        echo ""
+        echo "Claude Code Projects"
+        echo "===================="
+        echo ""
+
+        local healthy=0
+        local broken=0
+
+        while IFS= read -r proj_path; do
+            [[ -z "$proj_path" ]] && continue
+            local encoded="${proj_path//\//-}"
+            local sessions
+            sessions=$(count_sessions "$encoded")
+            local status_icon status_label
+
+            if [[ -d "$proj_path" ]]; then
+                status_icon="${GREEN}●${NC}"
+                status_label=""
+                ((healthy++)) || true
+            else
+                status_icon="${RED}●${NC}"
+                status_label=" ${RED}(missing)${NC}"
+                ((broken++)) || true
+            fi
+
+            local size_info=""
+            if [[ -d "$PROJECTS_DIR/$encoded" ]]; then
+                local session_size
+                session_size=$(get_folder_size "$PROJECTS_DIR/$encoded")
+                size_info=" | sessions: $session_size"
+            fi
+
+            echo -e "  $status_icon $proj_path$status_label"
+            echo -e "    Sessions: $sessions$size_info"
+        done <<< "$projects"
+
+        echo ""
+        echo "Total: $project_count projects ($healthy healthy, $broken broken)"
+        if [[ $broken -gt 0 ]]; then
+            echo -e "${YELLOW}Run 'claude-move-project --fix' to repair broken references${NC}"
+        fi
+    fi
+}
+
+# Execute verify operation
+execute_verify() {
+    echo ""
+    echo "Claude Code Project Health Check"
+    echo "================================="
+    echo ""
+
+    local issues=0
+    local unique_projects=""
+
+    # Check 1: History entries pointing to non-existent paths
+    log_info "Checking history.jsonl entries..."
+    local broken_history=""
+    local broken_count=0
+    if [[ -f "$HISTORY_FILE" ]]; then
+        unique_projects=$(_extract_history_projects)
+        if [[ -n "$unique_projects" ]]; then
+            while IFS= read -r proj_path; do
+                [[ -z "$proj_path" ]] && continue
+                if [[ ! -d "$proj_path" ]]; then
+                    broken_history="${broken_history}${broken_history:+$'\n'}${proj_path}"
+                    ((broken_count++)) || true
+                fi
+            done <<< "$unique_projects"
+        fi
+    fi
+
+    if [[ $broken_count -gt 0 ]]; then
+        echo -e "  ${RED}Found $broken_count broken history reference(s):${NC}"
+        while IFS= read -r bp; do
+            [[ -z "$bp" ]] && continue
+            echo -e "    ${RED}✗${NC} $bp"
+        done <<< "$broken_history"
+        issues=$((issues + broken_count))
+    else
+        echo -e "  ${GREEN}✓${NC} All history references are valid"
+    fi
+    echo ""
+
+    # Check 2: Orphaned session folders (no matching project on disk)
+    # Build a list of all encoded paths that map to known history projects
+    log_info "Checking session folders..."
+    local known_encoded=""
+    if [[ -n "$unique_projects" ]]; then
+        while IFS= read -r pp; do
+            [[ -z "$pp" ]] && continue
+            known_encoded="${known_encoded}${known_encoded:+$'\n'}${pp//\//-}"
+        done <<< "$unique_projects"
+    fi
+
+    local orphaned_sessions=""
+    local orphaned_count=0
+    if [[ -d "$PROJECTS_DIR" ]]; then
+        for session_dir in "$PROJECTS_DIR"/*/; do
+            [[ -d "$session_dir" ]] || continue
+            local encoded
+            encoded=$(basename "$session_dir")
+            # A session folder is orphaned if no project in history encodes to it
+            # AND no project directory on disk encodes to it
+            local has_match=false
+            if _list_has "$known_encoded" "$encoded"; then
+                has_match=true
+            fi
+            if [[ "$has_match" == false ]]; then
+                orphaned_sessions="${orphaned_sessions}${orphaned_sessions:+$'\n'}${encoded}"
+                ((orphaned_count++)) || true
+            fi
+        done
+    fi
+
+    if [[ $orphaned_count -gt 0 ]]; then
+        echo -e "  ${YELLOW}Found $orphaned_count orphaned session folder(s):${NC}"
+        while IFS= read -r os; do
+            [[ -z "$os" ]] && continue
+            local size
+            size=$(get_folder_size "$PROJECTS_DIR/$os")
+            echo -e "    ${YELLOW}?${NC} $PROJECTS_DIR/$os ($size)"
+        done <<< "$orphaned_sessions"
+        issues=$((issues + orphaned_count))
+    else
+        echo -e "  ${GREEN}✓${NC} No orphaned session folders"
+    fi
+    echo ""
+
+    # Check 3: Projects with history but no session folder
+    log_info "Checking for missing session folders..."
+    local missing_sessions=0
+    if [[ -f "$HISTORY_FILE" ]]; then
+        local unique_hist
+        unique_hist=$(_extract_history_projects)
+        if [[ -n "$unique_hist" ]]; then
+            while IFS= read -r proj_path; do
+                [[ -z "$proj_path" ]] && continue
+                local encoded="${proj_path//\//-}"
+                if [[ -d "$proj_path" && ! -d "$PROJECTS_DIR/$encoded" ]]; then
+                    if [[ $missing_sessions -eq 0 ]]; then
+                        echo -e "  ${YELLOW}Projects with history entries but no session folder:${NC}"
+                    fi
+                    echo -e "    ${YELLOW}?${NC} $proj_path"
+                    ((missing_sessions++)) || true
+                fi
+            done <<< "$unique_hist"
+        fi
+    fi
+
+    if [[ $missing_sessions -eq 0 ]]; then
+        echo -e "  ${GREEN}✓${NC} All projects have matching session folders"
+    fi
+    issues=$((issues + missing_sessions))
+    echo ""
+
+    # Summary
+    if [[ $issues -eq 0 ]]; then
+        echo -e "${GREEN}All checks passed! No issues found.${NC}"
+    else
+        echo -e "${YELLOW}Found $issues issue(s).${NC}"
+        echo "Run 'claude-move-project --fix' to attempt automatic repair."
+    fi
+}
+
+# Execute info operation
+execute_info() {
+    local encoded="${SOURCE_ABS//\//-}"
+
+    echo ""
+    echo "Claude Code Project Info"
+    echo "========================"
+    echo ""
+
+    # Project path and status
+    echo "Path: $SOURCE_ABS"
+    echo "Encoded: $encoded"
+    if [[ -d "$SOURCE_ABS" ]]; then
+        echo -e "Status: ${GREEN}exists${NC}"
+        local project_size
+        project_size=$(get_folder_size "$SOURCE_ABS")
+        echo "Project size: $project_size"
+    else
+        echo -e "Status: ${RED}missing${NC}"
+    fi
+    echo ""
+
+    # .claude/ settings
+    if [[ -d "$SOURCE_ABS/.claude" ]]; then
+        echo -e "Settings: ${GREEN}.claude/ directory found${NC}"
+        if [[ -f "$SOURCE_ABS/.claude/settings.json" ]]; then
+            echo "  - settings.json"
+        fi
+        if [[ -f "$SOURCE_ABS/CLAUDE.md" ]]; then
+            echo "  - CLAUDE.md"
+        fi
+    else
+        echo "Settings: no .claude/ directory"
+    fi
+    echo ""
+
+    # Session folder
+    echo "Session folder: $PROJECTS_DIR/$encoded/"
+    if [[ -d "$PROJECTS_DIR/$encoded" ]]; then
+        local session_count session_size
+        session_count=$(count_sessions "$encoded")
+        session_size=$(get_folder_size "$PROJECTS_DIR/$encoded")
+        echo -e "  Status: ${GREEN}exists${NC}"
+        echo "  Sessions: $session_count JSONL file(s)"
+        echo "  Size: $session_size"
+
+        # Show newest and oldest session
+        local newest oldest
+        newest=$(find "$PROJECTS_DIR/$encoded" -name "*.jsonl" -type f -exec stat -f "%m %N" {} \; 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+        oldest=$(find "$PROJECTS_DIR/$encoded" -name "*.jsonl" -type f -exec stat -f "%m %N" {} \; 2>/dev/null | sort -n | head -1 | cut -d' ' -f2-)
+
+        if [[ -n "$newest" ]]; then
+            echo "  Newest session: $(get_last_modified "$newest")"
+        fi
+        if [[ -n "$oldest" && "$oldest" != "$newest" ]]; then
+            echo "  Oldest session: $(get_last_modified "$oldest")"
+        fi
+    else
+        echo -e "  Status: ${YELLOW}not found${NC}"
+    fi
+    echo ""
+
+    # History entries
+    if [[ -f "$HISTORY_FILE" ]]; then
+        local entry_count
+        entry_count=$(grep -c -F -- "\"project\":\"$SOURCE_ABS\"" "$HISTORY_FILE" 2>/dev/null) || entry_count=0
+        echo "History entries: $entry_count"
+    else
+        echo "History entries: (history file not found)"
+    fi
+}
+
+# Execute fix operation
+execute_fix() {
+    echo ""
+    echo "Claude Code Project Fix"
+    echo "======================="
+    echo ""
+
+    if [[ -n "$FIX_FROM" && -n "$FIX_TO" ]]; then
+        # Explicit mode: --fix --from /old --to /new
+        execute_fix_explicit "$FIX_FROM" "$FIX_TO"
+    elif [[ -n "$FIX_TO" ]]; then
+        # Single path mode: --fix /new/path — auto-detect old path
+        execute_fix_detect_old "$FIX_TO"
+    else
+        # Full auto-detect mode
+        execute_fix_auto
+    fi
+}
+
+# Fix with explicit --from and --to paths
+execute_fix_explicit() {
+    local old_path="$1"
+    local new_path="$2"
+    local old_encoded="${old_path//\//-}"
+    local new_encoded="${new_path//\//-}"
+
+    log_info "Fixing: $old_path → $new_path"
+    echo ""
+
+    local changes=0
+
+    # Check and rename session folder
+    if [[ -d "$PROJECTS_DIR/$old_encoded" ]]; then
+        echo "Session folder: $PROJECTS_DIR/$old_encoded/"
+        echo "  → $PROJECTS_DIR/$new_encoded/"
+        changes=1
+    elif [[ -d "$PROJECTS_DIR/$new_encoded" ]]; then
+        log_info "Session folder already at new location"
+    else
+        log_warn "No session folder found for either path"
+    fi
+
+    # Check history entries
+    local entry_count=0
+    if [[ -f "$HISTORY_FILE" ]]; then
+        entry_count=$(grep -c -F -- "\"project\":\"$old_path\"" "$HISTORY_FILE" 2>/dev/null) || entry_count=0
+        if [[ $entry_count -gt 0 ]]; then
+            echo "History entries to update: $entry_count"
+            changes=1
+        fi
+    fi
+
+    if [[ $changes -eq 0 ]]; then
+        log_info "Nothing to fix — references already correct"
+        return 0
+    fi
+
+    echo ""
+
+    if [[ "$DRY_RUN" == true ]]; then
+        echo "Run without --dry-run to apply fix."
+        return 0
+    fi
+
+    # Confirm
+    if [[ "$FORCE" != true ]]; then
+        read -p "Apply fix? [y/N] " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Fix cancelled"
+            return 0
+        fi
+    fi
+
+    # Backup
+    if [[ "$BACKUP" == true && -f "$HISTORY_FILE" ]]; then
+        BACKUP_FILE="$HISTORY_FILE.backup.$(date +%Y%m%d-%H%M%S)"
+        cp "$HISTORY_FILE" "$BACKUP_FILE"
+        log_success "Created backup: $BACKUP_FILE"
+    fi
+
+    # Rename session folder
+    if [[ -d "$PROJECTS_DIR/$old_encoded" ]]; then
+        if [[ -d "$PROJECTS_DIR/$new_encoded" ]]; then
+            log_warn "New session folder already exists, skipping rename"
+        else
+            mv "$PROJECTS_DIR/$old_encoded" "$PROJECTS_DIR/$new_encoded"
+            log_success "Renamed session folder"
+        fi
+    fi
+
+    # Update history.jsonl
+    if [[ -f "$HISTORY_FILE" && $entry_count -gt 0 ]]; then
+        local old_escaped new_escaped
+        old_escaped=$(escape_for_sed "$old_path")
+        new_escaped=$(escape_for_sed "$new_path")
+
+        if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' "s|\"project\":\"$old_escaped\"|\"project\":\"$new_escaped\"|g" "$HISTORY_FILE"
+        else
+            sed -i "s|\"project\":\"$old_escaped\"|\"project\":\"$new_escaped\"|g" "$HISTORY_FILE"
+        fi
+        log_success "Updated $entry_count history entries"
+    fi
+
+    echo ""
+    log_success "Fix complete!"
+    echo ""
+    echo "Resume your session with:"
+    echo "  cd $new_path && claude --continue"
+}
+
+# Fix with auto-detected old path from a new path
+execute_fix_detect_old() {
+    local new_path="$1"
+    local new_name
+    new_name=$(basename "$new_path")
+
+    log_info "Looking for broken references that match: $new_name"
+    echo ""
+
+    # Find broken history entries
+    local candidates=""
+    local candidate_count=0
+    local seen=""
+
+    if [[ -f "$HISTORY_FILE" ]]; then
+        local unique_projects
+        unique_projects=$(_extract_history_projects)
+        if [[ -n "$unique_projects" ]]; then
+            while IFS= read -r proj_path; do
+                [[ -z "$proj_path" ]] && continue
+                if [[ ! -d "$proj_path" ]]; then
+                    local old_name
+                    old_name=$(basename "$proj_path")
+                    if [[ "$old_name" == "$new_name" ]] && ! _list_has "$seen" "$proj_path"; then
+                        candidates="${candidates}${candidates:+$'\n'}${proj_path}"
+                        seen="${seen}${seen:+$'\n'}${proj_path}"
+                        ((candidate_count++)) || true
+                    fi
+                fi
+            done <<< "$unique_projects"
+        fi
+    fi
+
+    if [[ $candidate_count -eq 0 ]]; then
+        log_warn "No broken references found matching '$new_name'"
+        echo "Try: claude-move-project --fix --from <old-path> --to $new_path"
+        return 1
+    elif [[ $candidate_count -eq 1 ]]; then
+        local first_candidate
+        first_candidate=$(echo "$candidates" | head -1)
+        log_info "Found match: $first_candidate"
+        execute_fix_explicit "$first_candidate" "$new_path"
+    else
+        echo "Multiple broken references found:"
+        local i=1
+        while IFS= read -r c; do
+            [[ -z "$c" ]] && continue
+            echo "  $i) $c"
+            ((i++)) || true
+        done <<< "$candidates"
+        echo ""
+
+        if [[ "$FORCE" == true ]]; then
+            local first_candidate
+            first_candidate=$(echo "$candidates" | head -1)
+            log_info "Using first match (--force)"
+            execute_fix_explicit "$first_candidate" "$new_path"
+        else
+            read -p "Select which to fix (1-$candidate_count): " -r
+            local idx=$((REPLY))
+            local selected
+            selected=$(echo "$candidates" | sed -n "${idx}p")
+            if [[ -n "$selected" ]]; then
+                execute_fix_explicit "$selected" "$new_path"
+            else
+                log_error "Invalid selection"
+                return 1
+            fi
+        fi
+    fi
+}
+
+# Full auto-detect fix mode
+execute_fix_auto() {
+    log_info "Scanning for broken project references..."
+    echo ""
+
+    # Find all broken entries
+    local broken_paths=""
+    local broken_count=0
+    local seen=""
+
+    if [[ -f "$HISTORY_FILE" ]]; then
+        local unique_projects
+        unique_projects=$(_extract_history_projects)
+        if [[ -n "$unique_projects" ]]; then
+            while IFS= read -r proj_path; do
+                [[ -z "$proj_path" ]] && continue
+                if [[ ! -d "$proj_path" ]] && ! _list_has "$seen" "$proj_path"; then
+                    seen="${seen}${seen:+$'\n'}${proj_path}"
+                    broken_paths="${broken_paths}${broken_paths:+$'\n'}${proj_path}"
+                    ((broken_count++)) || true
+                fi
+            done <<< "$unique_projects"
+        fi
+    fi
+
+    # Also check orphaned session folders (ones not matching any history entry)
+    # Build known encoded paths from history
+    local known_encoded=""
+    if [[ -n "$unique_projects" ]]; then
+        while IFS= read -r kp; do
+            [[ -z "$kp" ]] && continue
+            known_encoded="${known_encoded}${known_encoded:+$'\n'}${kp//\//-}"
+        done <<< "$unique_projects"
+    fi
+
+    if [[ -d "$PROJECTS_DIR" ]]; then
+        for session_dir in "$PROJECTS_DIR"/*/; do
+            [[ -d "$session_dir" ]] || continue
+            local encoded
+            encoded=$(basename "$session_dir")
+            # Only flag as orphaned if no history entry maps to this folder
+            if ! _list_has "$known_encoded" "$encoded" && ! _list_has "$seen" "(orphaned:$encoded)"; then
+                seen="${seen}${seen:+$'\n'}(orphaned:$encoded)"
+                # We can't reliably decode the path, so just note it
+                broken_paths="${broken_paths}${broken_paths:+$'\n'}(orphaned session: $PROJECTS_DIR/$encoded)"
+                ((broken_count++)) || true
+            fi
+        done
+    fi
+
+    if [[ $broken_count -eq 0 ]]; then
+        log_success "No broken references found. Everything looks good!"
+        return 0
+    fi
+
+    echo -e "${YELLOW}Found $broken_count broken reference(s):${NC}"
+    echo ""
+
+    local fixed=0
+    while IFS= read -r bp; do
+        [[ -z "$bp" ]] && continue
+        local bp_name
+        bp_name=$(basename "$bp")
+        echo -e "  ${RED}✗${NC} $bp"
+
+        # Try to find the project by name on disk using common locations
+        local matches=""
+        local match_seen=""
+
+        # Search for directories with same name in common parent locations
+        local bp_parent
+        bp_parent=$(dirname "$bp")
+        local bp_grandparent
+        bp_grandparent=$(dirname "$bp_parent")
+
+        # Look in parent directory and grandparent directory
+        for search_dir in "$bp_parent" "$bp_grandparent" "$HOME" "$HOME/Documents" "$HOME/Projects" "$HOME/projects" "$HOME/code" "$HOME/dev" "$HOME/workspace"; do
+            if [[ -d "$search_dir" ]]; then
+                while IFS= read -r match; do
+                    [[ -d "$match" ]] || continue
+                    local match_abs
+                    match_abs=$(cd "$match" && pwd)
+                    # Don't match the broken path itself, deduplicate
+                    if [[ "$match_abs" != "$bp" ]] && ! _list_has "$match_seen" "$match_abs"; then
+                        matches="${matches}${matches:+$'\n'}${match_abs}"
+                        match_seen="${match_seen}${match_seen:+$'\n'}${match_abs}"
+                    fi
+                done < <(find "$search_dir" -maxdepth 3 -type d -name "$bp_name" 2>/dev/null)
+            fi
+        done
+
+        local match_count=0
+        if [[ -n "$matches" ]]; then
+            match_count=$(echo "$matches" | wc -l | tr -d ' ')
+        fi
+
+        if [[ $match_count -eq 0 ]]; then
+            echo "    No matching directory found. Use:"
+            echo "    claude-move-project --fix --from \"$bp\" --to <new-path>"
+        elif [[ $match_count -eq 1 ]]; then
+            local single_match
+            single_match=$(echo "$matches" | head -1)
+            echo "    Possible match: $single_match"
+            if [[ "$DRY_RUN" == true ]]; then
+                echo "    Would fix: $bp → $single_match"
+            elif [[ "$FORCE" == true ]]; then
+                execute_fix_explicit "$bp" "$single_match"
+                ((fixed++)) || true
+            else
+                read -p "    Fix $bp → $single_match? [y/N] " -n 1 -r
+                echo ""
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    execute_fix_explicit "$bp" "$single_match"
+                    ((fixed++)) || true
+                fi
+            fi
+        else
+            echo "    Multiple possible matches:"
+            local i=1
+            while IFS= read -r m; do
+                [[ -z "$m" ]] && continue
+                echo "      $i) $m"
+                ((i++)) || true
+            done <<< "$matches"
+            if [[ "$DRY_RUN" != true && "$FORCE" != true ]]; then
+                read -p "    Select match (1-$match_count, or Enter to skip): " -r
+                if [[ -n "$REPLY" ]]; then
+                    local selected
+                    selected=$(echo "$matches" | sed -n "${REPLY}p")
+                    if [[ -n "$selected" ]]; then
+                        execute_fix_explicit "$bp" "$selected"
+                        ((fixed++)) || true
+                    fi
+                fi
+            fi
+        fi
+        echo ""
+    done <<< "$broken_paths"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        echo "Run without --dry-run to apply fixes."
+    else
+        echo "Fixed $fixed of $broken_count broken reference(s)."
+    fi
+}
+
 # Dispatch to appropriate execute function
 execute() {
+    # Read-only operations bypass dry-run gate
+    case "$OPERATION" in
+        list)   execute_list; return ;;
+        verify) execute_verify; return ;;
+        info)   execute_info; return ;;
+        fix)    execute_fix; return ;;
+    esac
+
     if [[ "$DRY_RUN" == true ]]; then
         local action_desc
         case "$OPERATION" in
