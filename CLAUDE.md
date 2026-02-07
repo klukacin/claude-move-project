@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`claude-move-project` is a bash utility that moves, fixes, lists, verifies, and manages Claude Code projects while preserving all session history and settings. It handles three interconnected data stores:
+`clamp` (**CL**aude **A**I **M**ove **P**roject) is a bash utility that moves, fixes, lists, verifies, and manages Claude Code projects while preserving all session history and settings. It handles three interconnected data stores:
 
 1. **Project folder** - The actual project directory with code and `.claude/` settings
 2. **History folder** - `~/.claude/projects/[encoded-path]/` containing session JSONL files
@@ -16,7 +16,7 @@ The encoded path format converts `/path/to/dir` to `-path-to-dir`.
 
 Test locally by running with `--dry-run` flag:
 ```bash
-./claude-move-project ./test-project ~/new-location --dry-run
+./clamp ./test-project ~/new-location --dry-run
 ```
 
 ## Key Implementation Details

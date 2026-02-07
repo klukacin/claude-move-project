@@ -1,18 +1,18 @@
 #!/bin/bash
 #
-# claude-move-project - Move a Claude Code project with session history
+# clamp - Move a Claude Code project with session history
 #
 # Copyright (c) 2025 WEB Solutions Ltd. (ws.agency) & Kristijan Lukačin
 # https://ws.agency
 #
 # Licensed under the MIT License. See LICENSE file for details.
 #
-# Usage: claude-move-project [OPTIONS] <source> <destination>
+# Usage: clamp [OPTIONS] <source> <destination>
 #
 
 set -euo pipefail
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 CLAUDE_DIR="$HOME/.claude"
 PROJECTS_DIR="$CLAUDE_DIR/projects"
 HISTORY_FILE="$CLAUDE_DIR/history.jsonl"
@@ -70,20 +70,20 @@ log_error() {
 
 show_help() {
     cat << EOF
-claude-move-project v$VERSION
+clamp v$VERSION
 Move, remove, pack, unpack, list, fix, verify, or inspect Claude Code projects.
 
 Usage:
-  claude-move-project [OPTIONS] <source> <destination>
-  claude-move-project --here [OPTIONS] <source>
-  claude-move-project --remove [OPTIONS] <project-path>
-  claude-move-project --pack [OPTIONS] <project-path> [archive-path]
-  claude-move-project --unpack [OPTIONS] <archive-path> <destination>
-  claude-move-project --list [--json]
-  claude-move-project --fix [project-path]
-  claude-move-project --fix --from <old-path> --to <new-path>
-  claude-move-project --verify
-  claude-move-project --info <project-path>
+  clamp [OPTIONS] <source> <destination>
+  clamp --here [OPTIONS] <source>
+  clamp --remove [OPTIONS] <project-path>
+  clamp --pack [OPTIONS] <project-path> [archive-path]
+  clamp --unpack [OPTIONS] <archive-path> <destination>
+  clamp --list [--json]
+  clamp --fix [project-path]
+  clamp --fix --from <old-path> --to <new-path>
+  clamp --verify
+  clamp --info <project-path>
 
 Operations:
   (default)           Move project to new location
@@ -115,27 +115,27 @@ Options:
 
 Examples:
   # Move project
-  claude-move-project ./my-project ~/new-location/my-project
-  claude-move-project --here ~/old-location/my-project
-  claude-move-project ./project ~/deep/nested/path -p
+  clamp ./my-project ~/new-location/my-project
+  clamp --here ~/old-location/my-project
+  clamp ./project ~/deep/nested/path -p
 
   # Remove project and all session data
-  claude-move-project --remove ./my-project
+  clamp --remove ./my-project
 
   # Pack/unpack project
-  claude-move-project --pack ./my-project
-  claude-move-project --unpack backup.claudepack ~/projects/my-project
+  clamp --pack ./my-project
+  clamp --unpack backup.claudepack ~/projects/my-project
 
   # List, inspect, and maintain
-  claude-move-project --list
-  claude-move-project --list --json
-  claude-move-project --info ./my-project
-  claude-move-project --verify
+  clamp --list
+  clamp --list --json
+  clamp --info ./my-project
+  clamp --verify
 
   # Fix broken references after manual mv
-  claude-move-project --fix                              # auto-detect
-  claude-move-project --fix /new/location/my-project     # find old path
-  claude-move-project --fix --from /old/path --to /new/path
+  clamp --fix                              # auto-detect
+  clamp --fix /new/location/my-project     # find old path
+  clamp --fix --from /old/path --to /new/path
 
 What gets migrated:
   - Project folder (moved/copied/deleted based on operation)
@@ -318,7 +318,7 @@ parse_args() {
                 exit 0
                 ;;
             --version)
-                echo "claude-move-project v$VERSION"
+                echo "clamp v$VERSION"
                 exit 0
                 ;;
             --remove)
@@ -410,7 +410,7 @@ parse_args() {
         fi
         if [[ "$arg1_set" == false ]]; then
             log_error "Source path required with --here"
-            echo "Usage: claude-move-project --here <source>"
+            echo "Usage: clamp --here <source>"
             exit 1
         fi
         SOURCE="$ARG1"
@@ -489,7 +489,7 @@ parse_args() {
         info)
             if [[ "$arg1_set" == false ]]; then
                 log_error "Project path required"
-                echo "Usage: claude-move-project --info <project-path>"
+                echo "Usage: clamp --info <project-path>"
                 exit 1
             fi
             SOURCE="$ARG1"
@@ -1175,7 +1175,7 @@ EOF
     echo "Size: $archive_size"
     echo ""
     echo "To unpack on another machine:"
-    echo "  claude-move-project --unpack $ARCHIVE_PATH <destination>"
+    echo "  clamp --unpack $ARCHIVE_PATH <destination>"
 }
 
 # Execute unpack operation
@@ -1469,7 +1469,7 @@ execute_list() {
         echo ""
         echo "Total: $project_count projects ($healthy healthy, $broken broken)"
         if [[ $broken -gt 0 ]]; then
-            echo -e "${YELLOW}Run 'claude-move-project --fix' to repair broken references${NC}"
+            echo -e "${YELLOW}Run 'clamp --fix' to repair broken references${NC}"
         fi
     fi
 }
@@ -1590,7 +1590,7 @@ execute_verify() {
         echo -e "${GREEN}All checks passed! No issues found.${NC}"
     else
         echo -e "${YELLOW}Found $issues issue(s).${NC}"
-        echo "Run 'claude-move-project --fix' to attempt automatic repair."
+        echo "Run 'clamp --fix' to attempt automatic repair."
     fi
 }
 
@@ -1813,7 +1813,7 @@ execute_fix_detect_old() {
 
     if [[ $candidate_count -eq 0 ]]; then
         log_warn "No broken references found matching '$new_name'"
-        echo "Try: claude-move-project --fix --from <old-path> --to $new_path"
+        echo "Try: clamp --fix --from <old-path> --to $new_path"
         return 1
     elif [[ $candidate_count -eq 1 ]]; then
         local first_candidate
@@ -1948,7 +1948,7 @@ execute_fix_auto() {
 
         if [[ $match_count -eq 0 ]]; then
             echo "    No matching directory found. Use:"
-            echo "    claude-move-project --fix --from \"$bp\" --to <new-path>"
+            echo "    clamp --fix --from \"$bp\" --to <new-path>"
         elif [[ $match_count -eq 1 ]]; then
             local single_match
             single_match=$(echo "$matches" | head -1)

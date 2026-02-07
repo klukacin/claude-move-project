@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test.sh - Test suite for claude-move-project
+# test.sh - Test suite for clamp
 #
 # Usage: ./test.sh [test_name]
 #   Run all tests: ./test.sh
@@ -20,7 +20,7 @@ NC='\033[0m'
 TEST_DIR=""
 MOCK_CLAUDE_DIR=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT="$SCRIPT_DIR/claude-move-project"
+SCRIPT="$SCRIPT_DIR/clamp"
 
 # Test counters
 TESTS_PASSED=0
@@ -691,7 +691,7 @@ test_fix_nothing_broken() {
 
 main() {
     echo ""
-    echo "Claude Move Project Test Suite"
+    echo "clamp Test Suite"
     echo "==============================="
     echo ""
 
