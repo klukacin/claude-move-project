@@ -218,7 +218,13 @@ cleanup() {
         log_verbose "Cleaned up temp directory: $TEMP_DIR"
     fi
 
-    if [[ $exit_code -ne 0 && "$DRY_RUN" == false ]]; then
+    # Only perform rollback if an operation actually started modifying state
+    local has_state_to_rollback=false
+    if [[ -n "$BACKUP_FILE" || "$PROJECT_FOLDER_MOVED" == true || "$HISTORY_FOLDER_MOVED" == true || "$HISTORY_MODIFIED" == true ]]; then
+        has_state_to_rollback=true
+    fi
+
+    if [[ $exit_code -ne 0 && "$DRY_RUN" == false && "$has_state_to_rollback" == true ]]; then
         echo ""
         log_error "Operation failed! Initiating rollback..."
 
@@ -2028,6 +2034,10 @@ execute() {
 
 # Main
 main() {
+    if [[ $# -eq 0 ]]; then
+        show_help
+        exit 0
+    fi
     parse_args "$@"
     validate
     show_preview

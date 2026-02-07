@@ -26,6 +26,14 @@ A bash utility that moves Claude Code projects while preserving all session hist
 
 ## Installation
 
+### Homebrew (macOS/Linux)
+
+```bash
+brew install wsagency/tap/clamp
+```
+
+### Manual
+
 ```bash
 git clone https://github.com/wsagency/claude-move-project.git
 cd claude-move-project
