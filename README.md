@@ -1,4 +1,6 @@
-# claude-move-project
+# clamp
+
+**CL**aude **A**I **M**ove **P**roject
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: macOS | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-blue.svg)](https://github.com/wsagency/claude-move-project#supported-platforms)
@@ -7,113 +9,113 @@ A bash utility that moves Claude Code projects while preserving all session hist
 
 ## Features
 
-- **Move** project folders to new locations
-- **Move here** (`--here`) — move a project into the current directory
-- **Fix** (`--fix`) — repair broken references after manual `mv`
-- **List** (`--list`) — show all Claude projects with status
-- **Verify** (`--verify`) — health check for project references
-- **Info** (`--info`) — detailed info about a single project
-- **Remove** projects and all associated session data (`--remove`)
-- **Pack** projects into portable `.claudepack` archives (`--pack`)
-- **Unpack** archives with automatic path rewriting (`--unpack`)
-- Auto-create parent directories with `-p`/`--parents`
-- Automatically migrates session history from `~/.claude/projects/`
-- Updates all path references in `~/.claude/history.jsonl`
-- Atomic rollback if any step fails
-- Dry-run mode to preview changes before execution
+- 📦 **Move** project folders to new locations
+- 📂 **Move here** (`--here`) — move a project into the current directory
+- 🔧 **Fix** (`--fix`) — repair broken references after manual `mv`
+- 📋 **List** (`--list`) — show all Claude projects with status
+- ✅ **Verify** (`--verify`) — health check for project references
+- ℹ️ **Info** (`--info`) — detailed info about a single project
+- 🗑️ **Remove** projects and all associated session data (`--remove`)
+- 📤 **Pack** projects into portable `.claudepack` archives (`--pack`)
+- 📥 **Unpack** archives with automatic path rewriting (`--unpack`)
+- 🗂️ Auto-create parent directories with `-p`/`--parents`
+- 🔄 Automatically migrates session history from `~/.claude/projects/`
+- 📝 Updates all path references in `~/.claude/history.jsonl`
+- 🛡️ Atomic rollback if any step fails
+- 👀 Dry-run mode to preview changes before execution
 
 ## Installation
 
 ```bash
 git clone https://github.com/wsagency/claude-move-project.git
 cd claude-move-project
-chmod +x claude-move-project
+chmod +x clamp
 ```
 
 Optionally, add to your PATH:
 
 ```bash
-sudo ln -s "$(pwd)/claude-move-project" /usr/local/bin/claude-move-project
+sudo ln -s "$(pwd)/clamp" /usr/local/bin/clamp
 ```
 
 ## Usage
 
 ```bash
 # Move a project
-claude-move-project <source> <destination> [options]
+clamp <source> <destination> [options]
 
 # Move project into current directory
-claude-move-project --here <source>
+clamp --here <source>
 
 # Move to deeply nested path (auto-create parents)
-claude-move-project <source> <destination> -p
+clamp <source> <destination> -p
 
 # Fix broken references after manual mv
-claude-move-project --fix
-claude-move-project --fix <new-path>
-claude-move-project --fix --from <old-path> --to <new-path>
+clamp --fix
+clamp --fix <new-path>
+clamp --fix --from <old-path> --to <new-path>
 
 # List all Claude projects
-claude-move-project --list [--json]
+clamp --list [--json]
 
 # Health check
-claude-move-project --verify
+clamp --verify
 
 # Project info
-claude-move-project --info <project-path>
+clamp --info <project-path>
 
 # Remove a project and all session data
-claude-move-project --remove <project-path>
+clamp --remove <project-path>
 
 # Pack a project into a portable archive
-claude-move-project --pack <project-path> [archive-path]
+clamp --pack <project-path> [archive-path]
 
 # Unpack an archive to a new location
-claude-move-project --unpack <archive-path> <destination>
+clamp --unpack <archive-path> <destination>
 ```
 
 ### Examples
 
 ```bash
 # Preview what would happen (recommended first step)
-claude-move-project ./my-project ~/new-location --dry-run
+clamp ./my-project ~/new-location --dry-run
 
 # Move a project (specifying full destination path)
-claude-move-project ./my-project ~/new-location/my-project
+clamp ./my-project ~/new-location/my-project
 
 # Move into current directory
-cd ~/new-location && claude-move-project --here ~/old/my-project
+cd ~/new-location && clamp --here ~/old/my-project
 
 # Move to nested path that doesn't exist yet
-claude-move-project ./my-project ~/deep/nested/new/path -p
+clamp ./my-project ~/deep/nested/new/path -p
 
 # Move into an existing directory (mv-like behavior)
-claude-move-project ./my-project ~/projects
+clamp ./my-project ~/projects
 
 # Move without confirmation prompt
-claude-move-project ./my-project ~/new-location --force
+clamp ./my-project ~/new-location --force
 
 # Fix after manual mv (most common scenario)
 mv ~/old/my-project ~/new/my-project
-claude-move-project --fix ~/new/my-project       # auto-detect old path
-claude-move-project --fix --from ~/old/my-project --to ~/new/my-project
+clamp --fix ~/new/my-project       # auto-detect old path
+clamp --fix --from ~/old/my-project --to ~/new/my-project
 
 # List all projects and their status
-claude-move-project --list
-claude-move-project --list --json
+clamp --list
+clamp --list --json
 
 # Check health of all project references
-claude-move-project --verify
+clamp --verify
 
 # Get detailed info about a project
-claude-move-project --info ./my-project
+clamp --info ./my-project
 
 # Remove project and all session data
-claude-move-project --remove ./my-project
+clamp --remove ./my-project
 
 # Pack/unpack project for transfer
-claude-move-project --pack ./my-project
-claude-move-project --unpack backup.claudepack ~/new-location
+clamp --pack ./my-project
+clamp --unpack backup.claudepack ~/new-location
 ```
 
 ### Destination Behavior
@@ -125,10 +127,10 @@ The destination argument works like `mv`:
 
 ```bash
 # Destination doesn't exist - creates ~/new-location as the project
-claude-move-project ./my-app ~/new-location
+clamp ./my-app ~/new-location
 
 # ~/projects exists - moves to ~/projects/my-app
-claude-move-project ./my-app ~/projects
+clamp ./my-app ~/projects
 ```
 
 ### Options
@@ -154,7 +156,7 @@ claude-move-project ./my-app ~/projects
 | `-h, --help` | Show help message |
 | `--version` | Show version |
 
-## How It Works
+## 🔍 How It Works
 
 Claude Code stores project data in three locations:
 
@@ -164,7 +166,7 @@ Claude Code stores project data in three locations:
 
 This script handles all three, ensuring your session history follows your project.
 
-### Migration Sequence
+### 🔄 Migration Sequence
 
 1. Backup `history.jsonl`
 2. Move project folder to destination
@@ -173,22 +175,22 @@ This script handles all three, ensuring your session history follows your projec
 
 If any step fails, all changes are automatically rolled back.
 
-### Fix Operation
+### 🔧 Fix Operation
 
 The most common scenario: you already moved a folder with `mv` and Claude sessions broke.
 
 ```bash
 # Auto-detect: scans for broken entries, tries to match by project name
-claude-move-project --fix
+clamp --fix
 
 # Point to the new location: auto-finds the broken old entry
-claude-move-project --fix ~/new/location/my-project
+clamp --fix ~/new/location/my-project
 
 # Explicit: specify both old and new paths
-claude-move-project --fix --from ~/old/path --to ~/new/path
+clamp --fix --from ~/old/path --to ~/new/path
 ```
 
-### Archive Format (.claudepack)
+### 📦 Archive Format (.claudepack)
 
 The `--pack` command creates a tar.gz archive with this structure:
 
@@ -202,7 +204,7 @@ project-name.claudepack
 
 When unpacking, paths are automatically rewritten to match the new destination.
 
-## Testing
+## 🧪 Testing
 
 Run the test suite to verify the script works correctly:
 
@@ -230,13 +232,13 @@ The test suite covers:
 - `--info` output
 - `--fix` (explicit paths, auto-detect, nothing broken)
 
-## Supported Platforms
+## 🖥️ Supported Platforms
 
 | Platform | Status |
 |----------|--------|
-| macOS | Fully supported |
-| Linux | Supported |
-| Windows | Via WSL or Git Bash |
+| macOS | ✅ Fully supported |
+| Linux | ✅ Supported |
+| Windows | ⚠️ Via WSL or Git Bash |
 
 ### Windows Users
 
@@ -246,7 +248,7 @@ This script requires a bash environment. Windows users can run it using:
 1. Install WSL2: `wsl --install` in PowerShell (admin)
 2. Open your WSL distro (e.g., Ubuntu)
 3. Navigate to your project: `cd /mnt/c/Users/YourName/projects/myproject`
-4. Run: `./claude-move-project ./my-project /mnt/c/new-location`
+4. Run: `./clamp ./my-project /mnt/c/new-location`
 
 **Option 2: Git Bash**
 1. Install [Git for Windows](https://git-scm.com/download/win) (includes Git Bash)
