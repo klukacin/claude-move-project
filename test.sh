@@ -686,6 +686,82 @@ test_fix_nothing_broken() {
 }
 
 # ============================================================================
+# PRUNE TESTS
+# ============================================================================
+
+test_prune_orphaned() {
+    # Create a real project (so history has entries)
+    create_mock_project "$TEST_DIR/real-project"
+
+    # Create an orphaned session folder (not referenced in history.jsonl)
+    mkdir -p "$MOCK_CLAUDE_DIR/projects/-orphaned-session-folder"
+    echo '{"type":"session","data":"orphaned"}' > "$MOCK_CLAUDE_DIR/projects/-orphaned-session-folder/session1.jsonl"
+
+    # Run prune
+    local output
+    output=$("$SCRIPT" --prune -f 2>&1)
+
+    # Orphaned folder should be removed
+    assert_not_exists "$MOCK_CLAUDE_DIR/projects/-orphaned-session-folder" "Orphaned session should be removed" || return 1
+
+    # Real project session folder should still exist
+    local real_abs
+    real_abs=$(cd "$TEST_DIR/real-project" && pwd)
+    local real_encoded="${real_abs//\//-}"
+    assert_dir_exists "$MOCK_CLAUDE_DIR/projects/$real_encoded" "Real project session should remain" || return 1
+
+    # Output should mention pruning
+    if echo "$output" | grep -q "Pruned"; then
+        return 0
+    else
+        echo "  Expected 'Pruned' in output"
+        echo "  Output: $output"
+        return 1
+    fi
+}
+
+test_prune_nothing() {
+    # Create a healthy project (no orphans)
+    create_mock_project "$TEST_DIR/healthy-project"
+
+    local output
+    output=$("$SCRIPT" --prune 2>&1)
+
+    if echo "$output" | grep -q "No orphaned session folders found"; then
+        return 0
+    else
+        echo "  Expected 'No orphaned session folders found'"
+        echo "  Output: $output"
+        return 1
+    fi
+}
+
+test_prune_dry_run() {
+    # Create a real project
+    create_mock_project "$TEST_DIR/real-project"
+
+    # Create an orphaned session folder
+    mkdir -p "$MOCK_CLAUDE_DIR/projects/-orphaned-dry-run"
+    echo '{"type":"session"}' > "$MOCK_CLAUDE_DIR/projects/-orphaned-dry-run/session1.jsonl"
+
+    # Run prune with --dry-run
+    local output
+    output=$("$SCRIPT" --prune --dry-run 2>&1)
+
+    # Orphaned folder should still exist
+    assert_dir_exists "$MOCK_CLAUDE_DIR/projects/-orphaned-dry-run" "Orphaned session should NOT be removed in dry-run" || return 1
+
+    # Output should indicate dry-run
+    if echo "$output" | grep -q "Would remove"; then
+        return 0
+    else
+        echo "  Expected 'Would remove' in output"
+        echo "  Output: $output"
+        return 1
+    fi
+}
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -735,6 +811,10 @@ main() {
         test_fix_explicit
         test_fix_auto_detect
         test_fix_nothing_broken
+        # prune tests
+        test_prune_orphaned
+        test_prune_nothing
+        test_prune_dry_run
     )
 
     # Run specific test or all tests

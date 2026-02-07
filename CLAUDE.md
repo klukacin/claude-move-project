@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`clamp` (**CL**aude **A**I **M**ove **P**roject) is a bash utility that moves, fixes, lists, verifies, and manages Claude Code projects while preserving all session history and settings. It handles three interconnected data stores:
+`clamp` (**CL**aude **A**I **M**ove **P**roject) is a bash utility that moves, fixes, lists, verifies, prunes, and manages Claude Code projects while preserving all session history and settings. It handles three interconnected data stores:
 
 1. **Project folder** - The actual project directory with code and `.claude/` settings
 2. **History folder** - `~/.claude/projects/[encoded-path]/` containing session JSONL files

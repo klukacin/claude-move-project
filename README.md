@@ -14,6 +14,7 @@ A bash utility that moves Claude Code projects while preserving all session hist
 - 🔧 **Fix** (`--fix`) — repair broken references after manual `mv`
 - 📋 **List** (`--list`) — show all Claude projects with status
 - ✅ **Verify** (`--verify`) — health check for project references
+- 🧹 **Prune** (`--prune`) — remove orphaned session folders
 - ℹ️ **Info** (`--info`) — detailed info about a single project
 - 🗑️ **Remove** projects and all associated session data (`--remove`)
 - 📤 **Pack** projects into portable `.claudepack` archives (`--pack`)
@@ -69,6 +70,9 @@ clamp --list [--json]
 # Health check
 clamp --verify
 
+# Remove orphaned session folders
+clamp --prune
+
 # Project info
 clamp --info <project-path>
 
@@ -115,6 +119,10 @@ clamp --list --json
 # Check health of all project references
 clamp --verify
 
+# Remove orphaned session folders
+clamp --prune
+clamp --prune --dry-run
+
 # Get detailed info about a project
 clamp --info ./my-project
 
@@ -149,6 +157,7 @@ clamp ./my-app ~/projects
 | `--fix` | Repair broken references after manual mv |
 | `--list` | List all Claude projects with status |
 | `--verify` | Health check for project references |
+| `--prune` | Remove orphaned session folders |
 | `--info` | Show detailed info about a project |
 | `--remove` | Delete project and all Claude session data |
 | `--pack` | Archive project into .claudepack file |
@@ -239,6 +248,7 @@ The test suite covers:
 - `--verify` (healthy and broken states)
 - `--info` output
 - `--fix` (explicit paths, auto-detect, nothing broken)
+- `--prune` (orphaned folders, nothing to prune, dry-run)
 
 ## 🖥️ Supported Platforms
 
